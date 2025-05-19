@@ -1,75 +1,258 @@
-import { Image } from 'expo-image';
-import { Platform, StyleSheet } from 'react-native';
+import { Client } from "@stomp/stompjs";
+import { Camera, CameraView } from "expo-camera";
+import React, { useEffect, useRef, useState } from "react";
+import { StyleSheet, Text, TouchableOpacity, View } from "react-native";
 
-import { HelloWave } from '@/components/HelloWave';
-import ParallaxScrollView from '@/components/ParallaxScrollView';
-import { ThemedText } from '@/components/ThemedText';
-import { ThemedView } from '@/components/ThemedView';
+export default function App() {
+  const [hasPermission, setHasPermission] = useState<boolean | null>(null);
+  const [scanned, setScanned] = useState(false);
+  const [showScanner, setShowScanner] = useState(false);
+  const [barcodeData, setBarcodeData] = useState("");
+  const [isConnected, setIsConnected] = useState(false);
+  const [stompClient, setStompClient] = useState<Client>();
+  const [scannedItems, setScannedItems] = useState<string[]>([]); // Track scanned items
 
-export default function HomeScreen() {
+  const isHandlingScan = useRef(false);
+
+  useEffect(() => {
+    const client = new Client({
+      brokerURL: "ws://192.168.10.9:8080/ws-mobile",
+      reconnectDelay: 5000,
+      heartbeatIncoming: 4000,
+      heartbeatOutgoing: 4000,
+      debug: function (str) {
+        console.log("STOMP: " + str);
+      },
+      connectHeaders: {
+        host: "192.168.10.9",
+      },
+      forceBinaryWSFrames: true,
+      appendMissingNULLonIncoming: true,
+    });
+
+    client.onConnect = () => {
+      console.log("WebSocket Connected");
+      setIsConnected(true);
+    };
+
+    client.onDisconnect = () => {
+      console.log("WebSocket Disconnected");
+      setIsConnected(false);
+    };
+
+    client.onWebSocketError = (error) => {
+      console.error("WebSocket error", error);
+    };
+
+    client.onStompError = (frame) => {
+      console.error("Broker reported error: " + frame.headers["message"]);
+      console.error("Additional details: " + frame.body);
+    };
+
+    client.activate();
+    setStompClient(client);
+
+    return () => {
+      client.deactivate();
+    };
+  }, []);
+
+  useEffect(() => {
+    const getBarCodeScannerPermissions = async () => {
+      const { status } = await Camera.requestCameraPermissionsAsync();
+      setHasPermission(status === "granted");
+    };
+    getBarCodeScannerPermissions();
+  }, []);
+
+  const handleBarCodeScanned = ({
+    type,
+    data,
+  }: {
+    type: string;
+    data: string;
+  }) => {
+    if (isHandlingScan.current) return;
+    isHandlingScan.current = true;
+
+    setScanned(true);
+    setBarcodeData(data);
+    setScannedItems((prev) => [...prev, data]); // Add to scanned items list
+
+    if (stompClient && isConnected) {
+      stompClient.publish({
+        destination: "/app/barcode/send",
+        body: data,
+      });
+      console.log("Barcode sent:", data);
+    } else {
+      console.warn("WebSocket not connected. Barcode not sent.");
+    }
+
+    // Reset after a short delay to allow new scans
+    setTimeout(() => {
+      setScanned(false);
+      isHandlingScan.current = false;
+    }, 1000);
+  };
+
+  const startScanning = () => {
+    setScanned(false);
+    setScannedItems([]); // Clear previous scans
+    isHandlingScan.current = false;
+    setShowScanner(true);
+  };
+
+  const stopScanning = () => {
+    setShowScanner(false);
+  };
+
+  if (hasPermission === null) {
+    return (
+      <View style={styles.container}>
+        <Text>Requesting for camera permission</Text>
+      </View>
+    );
+  }
+  if (hasPermission === false) {
+    return (
+      <View style={styles.container}>
+        <Text style={styles.permissionText}>No access to camera</Text>
+        <Text style={styles.permissionSubtext}>
+          Please enable camera permissions in your device settings
+        </Text>
+      </View>
+    );
+  }
+
   return (
-    <ParallaxScrollView
-      headerBackgroundColor={{ light: '#A1CEDC', dark: '#1D3D47' }}
-      headerImage={
-        <Image
-          source={require('@/assets/images/partial-react-logo.png')}
-          style={styles.reactLogo}
-        />
-      }>
-      <ThemedView style={styles.titleContainer}>
-        <ThemedText type="title">Welcome!</ThemedText>
-        <HelloWave />
-      </ThemedView>
-      <ThemedView style={styles.stepContainer}>
-        <ThemedText type="subtitle">Step 1: Try it</ThemedText>
-        <ThemedText>
-          Edit <ThemedText type="defaultSemiBold">app/(tabs)/index.tsx</ThemedText> to see changes.
-          Press{' '}
-          <ThemedText type="defaultSemiBold">
-            {Platform.select({
-              ios: 'cmd + d',
-              android: 'cmd + m',
-              web: 'F12',
-            })}
-          </ThemedText>{' '}
-          to open developer tools.
-        </ThemedText>
-      </ThemedView>
-      <ThemedView style={styles.stepContainer}>
-        <ThemedText type="subtitle">Step 2: Explore</ThemedText>
-        <ThemedText>
-          {`Tap the Explore tab to learn more about what's included in this starter app.`}
-        </ThemedText>
-      </ThemedView>
-      <ThemedView style={styles.stepContainer}>
-        <ThemedText type="subtitle">Step 3: Get a fresh start</ThemedText>
-        <ThemedText>
-          {`When you're ready, run `}
-          <ThemedText type="defaultSemiBold">npm run reset-project</ThemedText> to get a fresh{' '}
-          <ThemedText type="defaultSemiBold">app</ThemedText> directory. This will move the current{' '}
-          <ThemedText type="defaultSemiBold">app</ThemedText> to{' '}
-          <ThemedText type="defaultSemiBold">app-example</ThemedText>.
-        </ThemedText>
-      </ThemedView>
-    </ParallaxScrollView>
+    <View style={styles.container}>
+      {showScanner ? (
+        <View style={styles.scannerContainer}>
+          <CameraView
+            onBarcodeScanned={scanned ? undefined : handleBarCodeScanned}
+            style={StyleSheet.absoluteFillObject}
+          />
+          <View style={styles.scannerOverlay}>
+            <TouchableOpacity style={styles.stopButton} onPress={stopScanning}>
+              <Text style={styles.stopButtonText}>Stop Scanning</Text>
+            </TouchableOpacity>
+            <View style={styles.scannedItemsContainer}>
+              {scannedItems.map((item, index) => (
+                <Text key={index} style={styles.scannedItem}>
+                  Scanned: {item}
+                </Text>
+              ))}
+            </View>
+          </View>
+        </View>
+      ) : (
+        <>
+          <Text style={styles.title}>Barcode Scanner App</Text>
+          <TouchableOpacity style={styles.button} onPress={startScanning}>
+            <Text style={styles.buttonText}>Start Scanning</Text>
+          </TouchableOpacity>
+          {scannedItems.length > 0 && (
+            <View style={styles.resultsContainer}>
+              <Text style={styles.resultsTitle}>Last Scan:</Text>
+              <Text style={styles.resultsText}>{barcodeData}</Text>
+            </View>
+          )}
+        </>
+      )}
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  titleContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
+  container: {
+    flex: 1,
+    backgroundColor: "#fff",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 20,
   },
-  stepContainer: {
-    gap: 8,
-    marginBottom: 8,
+  scannerContainer: {
+    flex: 1,
+    width: "100%",
+    position: "relative",
   },
-  reactLogo: {
-    height: 178,
-    width: 290,
-    bottom: 0,
+  scannerOverlay: {
+    position: "absolute",
+    bottom: 20,
     left: 0,
-    position: 'absolute',
+    right: 0,
+    alignItems: "center",
+  },
+  title: {
+    fontSize: 24,
+    fontWeight: "bold",
+    marginBottom: 30,
+    textAlign: "center",
+  },
+  button: {
+    backgroundColor: "#007AFF",
+    paddingHorizontal: 20,
+    paddingVertical: 15,
+    borderRadius: 10,
+    width: "80%",
+    alignItems: "center",
+    marginBottom: 20,
+  },
+  stopButton: {
+    backgroundColor: "#FF3B30",
+    paddingHorizontal: 20,
+    paddingVertical: 15,
+    borderRadius: 10,
+    width: "80%",
+    alignItems: "center",
+    marginBottom: 20,
+  },
+  buttonText: {
+    color: "white",
+    fontSize: 18,
+    fontWeight: "bold",
+  },
+  stopButtonText: {
+    color: "white",
+    fontSize: 18,
+    fontWeight: "bold",
+  },
+  permissionText: {
+    fontSize: 18,
+    color: "red",
+    marginBottom: 10,
+  },
+  permissionSubtext: {
+    fontSize: 14,
+    color: "#666",
+    textAlign: "center",
+    paddingHorizontal: 20,
+  },
+  scannedItemsContainer: {
+    backgroundColor: "rgba(0,0,0,0.7)",
+    padding: 10,
+    borderRadius: 5,
+    maxHeight: 150,
+    width: "90%",
+  },
+  scannedItem: {
+    color: "white",
+    marginVertical: 2,
+  },
+  resultsContainer: {
+    marginTop: 20,
+    padding: 15,
+    backgroundColor: "#f0f0f0",
+    borderRadius: 10,
+    width: "100%",
+    alignItems: "center",
+  },
+  resultsTitle: {
+    fontWeight: "bold",
+    marginBottom: 5,
+  },
+  resultsText: {
+    fontSize: 16,
   },
 });
