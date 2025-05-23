@@ -10,13 +10,13 @@ export default function App() {
   const [barcodeData, setBarcodeData] = useState("");
   const [isConnected, setIsConnected] = useState(false);
   const [stompClient, setStompClient] = useState<Client>();
-  const [scannedItems, setScannedItems] = useState<string[]>([]); // Track scanned items
+  const [scannedItems, setScannedItems] = useState<string[]>([]);
 
   const isHandlingScan = useRef(false);
 
   useEffect(() => {
     const client = new Client({
-      brokerURL: "ws://192.168.10.9:8080/ws-mobile",
+      brokerURL: "ws://192.168.171.16:8080/ws-mobile",
       reconnectDelay: 5000,
       heartbeatIncoming: 4000,
       heartbeatOutgoing: 4000,
@@ -24,7 +24,7 @@ export default function App() {
         console.log("STOMP: " + str);
       },
       connectHeaders: {
-        host: "192.168.10.9",
+        host: "192.168.171.16",
       },
       forceBinaryWSFrames: true,
       appendMissingNULLonIncoming: true,
